@@ -1,8 +1,11 @@
 # --- Do not remove these libs ---
+from datetime import datetime
+
 import talib.abstract as ta
 from pandas import DataFrame
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
+from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, DecimalParameter, IntParameter
 
 # --------------------------------
@@ -18,14 +21,24 @@ class ProfessionalScalpingStrategy(IStrategy):
 
     # Minimal ROI designed for the strategy.
     # This attribute will be overridden if the config file contains "minimal_roi"
-    minimal_roi = {
-        "60": 0.01,
-        "30": 0.02,
-        "0": 0.04
-    }
+    minimal_roi = {"60": 0.01, "30": 0.02, "0": 0.04}
 
     # Stoploss:
-    stoploss = -0.10
+    use_fixed_stoploss = True
+    fixed_stoploss = -0.10
+
+    # ATR Stoploss
+    use_atr_stoploss = False
+    atr_stoploss_multiplier = DecimalParameter(1.0, 5.0, default=3.0, space="buy")
+
+    # Set use_custom_stoploss to True if atr_stoploss is enabled
+    use_custom_stoploss = True
+
+    @property
+    def stoploss(self):
+        if self.use_fixed_stoploss:
+            return self.fixed_stoploss
+        return -0.99
 
     # Trailing stop:
     trailing_stop = False
@@ -34,7 +47,7 @@ class ProfessionalScalpingStrategy(IStrategy):
     # trailing_only_offset_is_reached = False
 
     # Optimal timeframe for the strategy
-    timeframe = '5m'
+    timeframe = "5m"
 
     # Hyperopt parameters
     buy_rsi = IntParameter(20, 40, default=30, space="buy")
@@ -47,6 +60,30 @@ class ProfessionalScalpingStrategy(IStrategy):
     bb_window = IntParameter(10, 30, default=20, space="buy")
     bb_stddev = DecimalParameter(1.5, 2.5, default=2.0, space="buy")
 
+    def custom_stoploss(
+        self,
+        pair: str,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        after_fill: bool,
+        **kwargs,
+    ) -> float:
+        """
+        Custom stoploss logic, returning the new distance relative to current_rate.
+        """
+        if self.use_atr_stoploss:
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if not dataframe.empty and "atr" in dataframe.columns:
+                atr = dataframe.iloc[-1]["atr"]
+                multiplier = self.atr_stoploss_multiplier.value
+                stoploss_price = trade.open_rate - (atr * multiplier)
+                return (stoploss_price / current_rate) - 1
+
+        # Return a value that will not trigger a stoploss
+        return -0.99
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
         Adds several different TA indicators to the given DataFrame
@@ -54,21 +91,21 @@ class ProfessionalScalpingStrategy(IStrategy):
         Performance Note: For the best performance, TA libraries should be used sparingly.
         """
         # RSI
-        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
+        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=14)
 
         # ATR
-        dataframe['atr'] = ta.ATR(dataframe, timeperiod=14)
+        dataframe["atr"] = ta.ATR(dataframe, timeperiod=14)
 
         # EMA
-        dataframe['ema'] = ta.EMA(dataframe, timeperiod=self.ema_period.value)
+        dataframe["ema"] = ta.EMA(dataframe, timeperiod=self.ema_period.value)
 
         # Bollinger Bands
-        bollinger = qtpylib.bollinger_bands(qtpylib.typical_price(dataframe),
-                                            window=self.bb_window.value,
-                                            stds=self.bb_stddev.value)
-        dataframe['bb_lowerband'] = bollinger['lower']
-        dataframe['bb_middleband'] = bollinger['mid']
-        dataframe['bb_upperband'] = bollinger['upper']
+        bollinger = qtpylib.bollinger_bands(
+            qtpylib.typical_price(dataframe), window=self.bb_window.value, stds=self.bb_stddev.value
+        )
+        dataframe["bb_lowerband"] = bollinger["lower"]
+        dataframe["bb_middleband"] = bollinger["mid"]
+        dataframe["bb_upperband"] = bollinger["upper"]
 
         return dataframe
 
@@ -80,7 +117,8 @@ class ProfessionalScalpingStrategy(IStrategy):
             (
                 # Placeholder for buy logic
             ),
-            'buy'] = 1
+            "buy",
+        ] = 1
 
         return dataframe
 
@@ -92,5 +130,6 @@ class ProfessionalScalpingStrategy(IStrategy):
             (
                 # Placeholder for sell logic
             ),
-            'sell'] = 1
+            "sell",
+        ] = 1
         return dataframe
