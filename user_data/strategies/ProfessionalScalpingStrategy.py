@@ -6,7 +6,8 @@ from pandas import DataFrame
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 from freqtrade.persistence import Trade
-from freqtrade.strategy import IStrategy, DecimalParameter, IntParameter
+from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy
+
 
 # --------------------------------
 
@@ -24,21 +25,26 @@ class ProfessionalScalpingStrategy(IStrategy):
     minimal_roi = {"60": 0.01, "30": 0.02, "0": 0.04}
 
     # Stoploss:
+    # 1. Fixed Stoploss
     use_fixed_stoploss = True
-    fixed_stoploss = -0.10
+    fixed_stoploss = DecimalParameter(0.01, 0.20, default=0.10, space="buy")
 
-    # ATR Stoploss
+    # 2. ATR-based Dynamic Stoploss
     use_atr_stoploss = False
     atr_stoploss_multiplier = DecimalParameter(1.0, 5.0, default=3.0, space="buy")
-
-    # Set use_custom_stoploss to True if atr_stoploss is enabled
-    use_custom_stoploss = True
 
     @property
     def stoploss(self):
         if self.use_fixed_stoploss:
-            return self.fixed_stoploss
+            return -self.fixed_stoploss.value
         return -0.99
+
+    @property
+    def use_custom_stoploss(self):
+        """
+        Enable custom stoploss logic if ATR stoploss is enabled.
+        """
+        return self.use_atr_stoploss
 
     # Trailing stop:
     trailing_stop = False
